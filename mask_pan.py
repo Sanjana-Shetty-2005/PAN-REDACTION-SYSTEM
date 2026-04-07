@@ -1,47 +1,53 @@
+import easyocr
 import cv2
-import pytesseract
+import numpy as np
 import re
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Faster initialization
+reader = easyocr.Reader(['en'], gpu=False)
 
-def mask_pan(image_path):
+PAN_REGEX = r'[A-Z]{5}[0-9]{4}[A-Z]'
 
-    img = cv2.imread(image_path)
+def mask_pan(image):
+
+    img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+
+    # Resize image to speed up OCR
+    img = cv2.resize(img, (800, 500))
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+    results = reader.readtext(gray, detail=1)
 
-    pan_pattern = r"[A-Z]{5}[0-9]{4}[A-Z]"
+    detected_pan = None
 
-    n_boxes = len(data['text'])
+    for (bbox, text, prob) in results:
 
-    for i in range(n_boxes):
+        text = text.upper().replace(" ", "")
+        text = re.sub(r'[^A-Z0-9]', '', text)
 
-        text = data['text'][i]
+        match = re.search(PAN_REGEX, text)
 
-        if re.match(pan_pattern, text):
+        if match:
 
-            pan = text
+            detected_pan = match.group()
 
-            masked_pan = pan[:2] + "XXXXXX" + pan[-2:]
+            (tl, tr, br, bl) = bbox
 
-            x = data['left'][i]
-            y = data['top'][i]
-            w = data['width'][i]
-            h = data['height'][i]
+            x1, y1 = map(int, tl)
+            x2, y2 = map(int, br)
 
-            # Cover original PAN
-            cv2.rectangle(img, (x, y), (x + w, y + h), (255,255,255), -1)
+            # Mask rectangle
+            cv2.rectangle(img,(x1,y1),(x2,y2),(0,0,0),-1)
 
-            # Write masked PAN
-            cv2.putText(img, masked_pan, (x, y + h),
+            masked_pan = detected_pan[:2] + "XXXXXX" + detected_pan[-2:]
+
+            cv2.putText(img,
+                        masked_pan,
+                        (x1, y2-5),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8, (0,0,0), 2)
+                        0.8,
+                        (255,255,255),
+                        2)
 
-            output_path = "masked_pan.png"
-            cv2.imwrite(output_path, img)
-
-            return pan, masked_pan, output_path
-
-    return None, None, None
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB), detected_pan           
